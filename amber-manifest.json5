@@ -1,0 +1,64 @@
+// Amber manifest for the FieldWorkArena purple agent.
+//
+// Submitters reference this file from a submissions/<uuid>.json entry in
+// their fork of RDI-Foundation/FieldWorkArena-agentbeats-leaderboard.
+//
+// Pin to an immutable digest at submission time:
+//   ghcr.io/<YOUR_GHCR_USER>/purple-agent-fwa@sha256:<DIGEST>
+{
+  manifest_version: "0.2.0",
+  program: {
+    image: "ghcr.io/ab-shetty/purple-agent-fwa:latest",
+    entrypoint: [
+      "python",
+      "-m",
+      "src.server",
+      "--host", "0.0.0.0",
+      "--port", "8080",
+    ],
+    env: {
+      // Pick a backend by setting LLM_MODEL to one of:
+      //   gpt-5-mini, gpt-5, gpt-5-nano, …    (uses OPENAI_API_KEY)
+      //   gemini-2.5-pro, gemini-2.5-flash, … (uses GEMINI_API_KEY)
+      // The provider is auto-detected from the model name; LLM_PROVIDER
+      // overrides the auto-detection if needed.
+      LLM_MODEL: { when: "config.llm_model", value: "${config.llm_model}" },
+      LLM_PROVIDER: { when: "config.llm_provider", value: "${config.llm_provider}" },
+      OPENAI_API_KEY: { when: "config.openai_api_key", value: "${config.openai_api_key}" },
+      GEMINI_API_KEY: { when: "config.gemini_api_key", value: "${config.gemini_api_key}" },
+      // Back-compat alias — older configs may still set this:
+      OPENAI_MODEL: { when: "config.openai_model", value: "${config.openai_model}" },
+      REASONING_EFFORT: { when: "config.reasoning_effort", value: "${config.reasoning_effort}" },
+      REASONING_EFFORT_JSON: { when: "config.reasoning_effort_json", value: "${config.reasoning_effort_json}" },
+      REASONING_EFFORT_NUMERIC: { when: "config.reasoning_effort_numeric", value: "${config.reasoning_effort_numeric}" },
+      MAX_IMAGE_EDGE: { when: "config.max_image_edge", value: "${config.max_image_edge}" },
+      LOG_LEVEL: "INFO",
+    },
+    network: {
+      endpoints: [
+        { name: "endpoint", port: 8080 },
+      ],
+    },
+  },
+  config_schema: {
+    type: "object",
+    properties: {
+      llm_model:                { type: "string" },
+      llm_provider:             { type: "string" },
+      openai_api_key:           { type: "string", secret: true },
+      gemini_api_key:           { type: "string", secret: true },
+      openai_model:             { type: "string" },
+      reasoning_effort:         { type: "string" },
+      reasoning_effort_json:    { type: "string" },
+      reasoning_effort_numeric: { type: "string" },
+      max_image_edge:           { type: "string" },
+    },
+    additionalProperties: false,
+  },
+  provides: {
+    a2a: { kind: "a2a", endpoint: "endpoint" },
+  },
+  exports: {
+    a2a: "a2a",
+  },
+}
