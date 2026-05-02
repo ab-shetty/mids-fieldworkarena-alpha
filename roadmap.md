@@ -1,310 +1,458 @@
 # Roadmap — FieldWorkArena Purple Agent
 
-This file is the handoff doc. If a fresh agent picks up this work, read this
-top-to-bottom before touching code.
+This is the working handoff doc for the purple agent in
+`/root/agentbeats/purple`. Read this before changing code.
 
 ## Goal
 
-Build a competitive **purple agent** for the AgentBeats Phase 2
-**FieldWorkArena** benchmark (research agent track). User signed up at
-agentbeats.dev as `ashetty21@berkeley.edu`. Target a top-3 finish on the
-**factory** category (where the leaderboard's 99.7% / 99.1% top scores
-currently sit). Above 90% is the stretch goal; ~60-65% is the realistic
-ceiling for a single-model approach without extra agent-level tricks.
+Build a competitive purple agent for AgentBeats Phase 2 on the
+**FieldWorkArena** benchmark, with primary focus on the **factory**
+category. The practical near-term goal is steady local improvement on a
+fixed representative slice and then a real leaderboard baseline.
 
-## Background — important things to know
+## Non-negotiable guardrails
 
-### 1. The benchmark is FieldWorkArena, not MLE-Bench
+These came directly from the user and must be preserved:
 
-The user originally said "MLE-Bench in the research agent track" but every
-URL they linked is **FieldWorkArena** — a factory/warehouse/retail
-field-operations benchmark using real Fujitsu facility data. Confirmed
-2026-05-02. MLE-Bench is a separate competition. **Do not conflate them.**
+1. **Never inspect competitors' code.**
+2. **Do not cheat.** No task-ID branching, no hardcoded answers, no prompt
+   stuffing with benchmark-specific gold outputs.
+3. Use the user's existing environment credentials:
+   - `OPENAI_API_KEY`
+   - `HUGGINGFACE_TOKEN` / `HF_TOKEN`
+4. Use `gpt-5-mini` for local testing unless the user explicitly asks for a
+   model comparison.
+5. Prefer a representative local slice that takes roughly 10-15 minutes,
+   not full-benchmark runs for every iteration.
+6. Keep GitHub runner constraints in mind:
+   - CPU-only friendly
+   - lightweight dependencies
+   - no large local vision stacks unless clearly justified
 
-Refs:
-- Green agent: `https://github.com/RDI-Foundation/FieldWorkArena-agentbeats`
-- Agentbeats page: `https://agentbeats.dev/agentbeater/fieldworkarena`
-- HuggingFace dataset: `Fujitsu/FieldWorkArena_Dataset` (gated; needs
-  `HF_TOKEN` to access)
+## Benchmark reality
 
-### 2. Three task categories with current availability limits
+The user originally mentioned MLE-Bench, but the linked benchmark, green
+agent, leaderboard, and dataset are all for **FieldWorkArena**. Treat
+FieldWorkArena as the benchmark of record.
 
-| category | available / total | dominant input types |
-|---|---:|---|
-| **factory** | 79 / 176 | jpg (98), pdf (14), txt (2) — **no videos** |
-| warehouse | 162 / 264 | mixed, includes videos |
-| retail | 5 / 446 | mixed |
+Relevant repos and assets:
 
-Factory is where the leaderboard competition is concentrated and where we
-target. Factory eval-function distribution: **fuzzy_match 43, numerical_match
-24, json_match 12**. Output format: **text 67, json 12**.
+- Green agent repo:
+  `https://github.com/RDI-Foundation/FieldWorkArena-agentbeats`
+- Agentbeats benchmark page:
+  `https://agentbeats.dev/agentbeater/fieldworkarena`
+- Leaderboard repo:
+  `https://github.com/RDI-Foundation/FieldWorkArena-agentbeats-leaderboard`
+- Dataset:
+  `Fujitsu/FieldWorkArena_Dataset` on Hugging Face
 
-Factory subset breakdown by source file:
-- `Tasks_2.3.json` (54 tasks, 68% of factory): single-image PPE/safety yes-no,
-  fuzzy
-- `Tasks_1.1.json` (9 tasks): PDF document extraction, fuzzy
-- `Tasks_4.2.json` (8 tasks): PDF + image compliance reports, mostly JSON
-- `Tasks_3.3.json` (4 tasks): multi-image counting, numerical
-- `Tasks_3.4.json` (4 tasks): multi-image violations to JSON
+Factory remains the focus because that is where the public competition is
+concentrated and where the current agent work has been evaluated.
 
-### 3. Wire protocol (A2A over HTTP)
+## Current agent architecture
 
-The purple agent serves an A2A endpoint on **port 8080** (per the manifest
-convention; locally we use 9019 to match the green's `scenario.toml`). The
-green agent on port 9009 sends each task as a single A2A `Message` with:
+### Runtime pieces
 
-- `parts[0]` = `TextPart` with the goal: `# Question\n... # Input Data\n
-  filenames... # Output Format\ntext|json`.
-- `parts[1..N]` = `FilePart(FileWithBytes)` for each attached file (jpg / pdf
-  / txt / mp4), base64-encoded.
+- [src/server.py](/root/agentbeats/purple/src/server.py)
+  A2A HTTP server.
+- [src/executor.py](/root/agentbeats/purple/src/executor.py)
+  Bridges the incoming A2A task to the local agent.
+- [src/multimodal.py](/root/agentbeats/purple/src/multimodal.py)
+  Converts A2A file parts into image/text inputs.
+- [src/providers.py](/root/agentbeats/purple/src/providers.py)
+  Provider abstraction over OpenAI and Gemini.
+- [src/agent.py](/root/agentbeats/purple/src/agent.py)
+  Main task logic, prompt selection, crop derivation, JSON normalization,
+  bbox-specific routing.
+- [tests/harness.py](/root/agentbeats/purple/tests/harness.py)
+  Local benchmark harness against green's evaluators.
 
-We respond with a single `TaskStatusUpdateEvent` whose final state is
-`TaskState.completed` and whose message's first `TextPart` contains the
-answer text. The green parses ONLY this `TextPart` for grading.
+### What the agent now does
 
-Source of truth: `/root/agentbeats/green/src/fieldworkarena/agent/fwa_green_agent.py`.
+1. Parses the green agent's `# Question / # Input Data / # Output Format`
+   goal string.
+2. Converts image, PDF, and text attachments into a single multimodal input.
+3. Uses prompt suffixes specialized for:
+   - numeric tasks
+   - box / coordinate tasks
+   - facing-direction tasks
+   - long-sleeve tasks
+   - evidence-only constraints
+   - JSON issue-report tasks
+4. For coordinate-based image tasks, derives:
+   - exact bbox crop
+   - padded context crop
+5. For JSON issue-report tasks, normalizes model output into a deterministic
+   benchmark-style schema.
+6. For bbox-based JSON incident tasks, bypasses generic JSON generation and
+   instead:
+   - solves each image individually with the crop-aware text path
+   - confirms candidate incidents with one extra verification pass
+   - renders final JSON deterministically
 
-### 4. Grading rubric (six eval functions)
+## Important current behaviors
 
-The green agent grades each answer with one of:
+### 1. Crop tool is live and on by default
 
-| eval_func | how it scores |
-|---|---|
-| `fuzzy_match` | LLM judge (`gpt-4-1106-preview`) returns correct/incorrect/partially correct; partial → 0 |
-| `numerical_match` | LLM extracts numbers; `(1 - 0.5) + 0.5 * numerical_score` if "correct", 0 if "incorrect"; `eval_distance` gives partial credit on |Δ|/ref ≤ 0.1/0.2/0.3/0.4/0.5 |
-| `json_match` | LLM judge with JSON-aware prompt |
-| `exact_match` | string equality after lowercase |
-| `must_include` | substring match |
-| `must_exclude` | substring non-match |
+Coordinate-based tasks now get derived image views in
+[src/agent.py](/root/agentbeats/purple/src/agent.py:559) using Pillow only.
+This is lightweight and GitHub-runner safe.
 
-Critical: **flipping a boolean kills the entire numerical_match score.** A
-"No, it is 1.4 m" when gold is "Yes, it is 0.5 m" → 0 points, not 0.5.
+### 2. Deterministic JSON rendering is live and on by default
 
-The judge LLM is `gpt-4-1106-preview` (retired). For local grading we
-substitute `gpt-4o-mini` via a monkey-patch in the harness; this only affects
-local scores, not the leaderboard.
+Issue-report tasks are no longer expected to emit the final benchmark schema
+directly from the model. The model first emits a normalized `{"items":[...]}`
+shape, and code renders the final `{"total_violations": ..., "details": ...}`
+payload deterministically.
 
-### 5. Data source needs HF_TOKEN
+### 3. Bbox-specific JSON path is live and on by default
 
-`BenchmarkDataSource` reads `HF_TOKEN` (or `HUGGINGFACE_TOKEN`, aliased) and
-downloads files from `Fujitsu/FieldWorkArena_Dataset` on HuggingFace. The
-dataset is gated; the user already has access on their account. Must be set
-in the runtime env of any local harness or container that loads file
-payloads.
+Tasks like bbox-presence / bbox-facing incident reports now route through
+`_solve_bbox_issue_report_json(...)` instead of one-shot JSON generation.
 
-### 6. Image / manifest contract
+### 4. Global second-pass verifier exists but is OFF by default
 
-Image must be `linux/amd64`, pushed to GHCR, package made public.
-Manifest expects port 8080 and a single A2A endpoint. The user's
-`OPENAI_API_KEY` and `GEMINI_API_KEY` are passed via `${config.openai_api_key}`
-and `${config.gemini_api_key}` (both marked `secret: true`). `LLM_MODEL` can
-be overridden at submission time via `${config.llm_model}`; provider is
-auto-detected from the model name prefix (`gemini-*` → Gemini, else OpenAI).
-When omitted, runtime default is `gpt-5-mini`.
+`ENABLE_SECOND_PASS_VERIFY=1` enables a broader self-check on text answers,
+but measured results were negative. Leave it off unless explicitly testing it.
 
-## Submitted results so far
+### 5. Narrow bbox incident confirmation is ON by default
 
-**None yet (2026-05-02).** No submissions to the FieldWorkArena leaderboard.
-Local sample evaluation only.
+`ENABLE_BBOX_JSON_CONFIRM=1` is the current default. It only triggers when a
+bbox JSON route is about to emit an incident for a specific image. This was a
+measured improvement, not a speculative one.
 
-## What is built
+## Current environment knobs
 
-| Path | Status | Notes |
-|---|---|---|
-| `src/server.py` | ✅ | A2A Starlette app, port 9019 (manifest maps to 8080), agent card advertises `text/pdf/jpeg/mp4`. |
-| `src/executor.py` | ✅ | Bridges A2A executor lifecycle. Splits the goal text from extracted PDF/text content, emits final answer in a single `TextPart`. |
-| `src/agent.py` | ✅ | Single multimodal call to the chosen model. Format-aware system prompt, JSON mode when goal hints `json`. Reasoning effort: `medium` for free-text, `high` for json/numerical. |
-| `src/multimodal.py` | ✅ | `FilePart` → model content blocks. Image: downscale to 1568px max edge + JPEG re-encode. PDF: pypdf text extract. Text: utf-8 decode. Video: opencv frame-sample (max 24 frames, evenly spaced). |
-| `src/providers.py` | ✅ | Provider abstraction. `OpenAIProvider` uses Responses API with `reasoning.effort` + JSON mode. `GeminiProvider` uses google-genai with `thinking_config` budget mapped from effort + `response_mime_type` for JSON. Both pin temp=0/seed=0 for determinism. |
-| `tests/harness.py` | ✅ | Loads factory tasks from green's benchmark dir, downloads files via `BenchmarkDataSource`, runs agent in-process (no A2A round-trip), grades with green's evaluators. Supports `--n N --seed S`, `--ids …`, `--bucket fuzzy/numerical/json`, `--all`. Substitutes `gpt-4o-mini` for retired judge model. |
-| `Dockerfile` | ✅ | python:3.12-slim, libgl1/libglib for opencv, exposes 9019. |
-| `amber-manifest.json5` | ✅ | Image ref placeholder — update before submit. Exposes `llm_model`, `llm_provider`, `openai_api_key`, `gemini_api_key`, plus reasoning-effort knobs. |
-| `requirements.txt` | ✅ | `a2a-sdk[http-server]>=0.3.20,<1.0`, openai, google-genai, pypdf, pillow, opencv-python-headless, numpy. |
+Main env vars in use:
 
-## What is NOT done yet
+- `LLM_MODEL` default: `gpt-5-mini`
+- `REASONING_EFFORT`
+- `REASONING_EFFORT_JSON`
+- `REASONING_EFFORT_NUMERIC`
+- `REASONING_EFFORT_VERIFY`
+- `MAX_OUTPUT_TOKENS`
+- `ENABLE_SECOND_PASS_VERIFY` default `0`
+- `ENABLE_BBOX_JSON_CONFIRM` default `1`
+- `MAX_COORDINATE_CROPS`
+- `COORDINATE_CROP_MARGIN_RATIO`
 
-1. **No submission has been made.** The agent hasn't been built into a Docker
-   image or pushed to GHCR. Need to: build linux/amd64 image, push to
-   `ghcr.io/ab-shetty/purple-agent-fwa`, mark the package public, update
-   `amber-manifest.json5` with the pinned digest, and submit via Quick Submit
-   on agentbeats.dev. **Lift in difficulty: trivial, just hasn't been done.**
-2. **No re-verification / multi-pass loop.** Currently each task is one
-   model call. A second pass that re-examines the image with the draft
-   answer as context ("you said 0.3 m — count pallet widths to verify")
-   could lift spatial-reasoning scores by 5-15pp historically. ~2× cost,
-   ~2× latency. **Lift: medium.**
-3. **No tool-use augmentation.** The leaderboard's 99.7% almost certainly
-   uses agent-level tricks beyond raw VLM capability — likely tool calls to
-   specialized vision models (object detection, depth estimation, OCR for
-   visible measurements) and/or ensemble voting. We do none of that today.
-   **Lift: high (multi-day).**
-4. **Canonical test subset not picked.** User asked to stop seed-shopping;
-   we should commit a fixed 10-task representative subset (5 fuzzy, 3
-   numerical, 2 json — span easy/medium/hard within each bucket) at
-   `tests/canonical.txt` and add a `--canonical` harness flag, so iteration
-   uses the same tasks every time and score deltas are meaningful. **Lift:
-   trivial; pending user sign-off on bucket weights.**
-5. **No video tasks tested.** Factory has none. **Warehouse and retail
-   currently have NO available video tasks either** — all 102 unreleased
-   warehouse tasks may include videos, but none of the 162 currently
-   available do. (Confirmed by extension scan 2026-05-02.) The
-   `_extract_video_frames` path samples 24 evenly-spaced JPEG frames; not
-   verified end-to-end. **Lift: low; deferred until video tasks are released.**
+## Fixed evaluation slice
 
-## Verified locally
+The user explicitly asked to stop seed-shopping. That is now implemented.
 
-- All Python files compile under Python 3.12.
-- `/usr/bin/python` is Python 3.8 (won't run this code); the venv at
-  `.venv/` uses Python 3.12.
-- Server boots and serves `/.well-known/agent-card.json` on port 9019.
-- HF dataset access works with the user's `HUGGINGFACE_TOKEN`.
-- The `a2a-sdk` version pin is critical: pip's resolver picks `1.0.x` by
-  default, which has a breaking API change (no `FilePart` / `FileWithBytes`
-  exports under `a2a.types`). `requirements.txt` pins `>=0.3.20,<1.0` —
-  keep it that way unless you also rewrite the imports.
-- Sample-evaluation snapshot (factory subset, 6-task seed=42 mixed sample
-  unless noted; "judge=gpt-4o-mini" substituted for retired
-  `gpt-4-1106-preview`):
+[tests/canonical.txt](/root/agentbeats/purple/tests/canonical.txt) contains
+the current fixed 18-task slice:
 
-| model | sample | score | notes |
-|---|---|---:|---|
-| `gpt-5-mini` | seed=42, n=6 | 2.7/6 (0.45) | ~5s/task; ~7 min full 79 |
-| `gpt-5` | seed=42, n=6 | 3.0/6 (0.50) | ~25-65s/task; ~30-40 min full |
-| `gemini-2.5-flash` (free) | seed=42, n=6 | 0.0/6 (0.00) | hallucinated JSON violations, self-contradictory wording |
-| `gemini-2.5-flash` (free) | seed=11, n=6 | 1.0/6 (0.17) | hit free-tier 5 req/min limit |
-| `gemini-2.5-pro` (paid) | seed=42, n=6 | 3.0/6 (0.50) | best so far on this seed |
-| `gemini-2.5-pro` (paid) | seed=11, n=8 | 3.0/8 (0.38) | another seed, smaller variance |
-| `gemini-3.1-pro-preview` | seed=42, n=6 | 1.8/6 (0.30) | terser PDF extraction hurts fuzzy; underestimates distances more |
-
-- Hard-case patterns observed across all models on the seed=42 sample:
-  - `2.3.0019` "Are workers wearing long-sleeved shirts?" — every model
-    answers "No" (visual error vs gold "Yes"). Possibly a benchmark
-    annotation that disagrees with naive visual reading.
-  - `2.3.0047` 0.5m gold, all models predict 0.1-0.3m (under-estimate).
-  - `2.3.0043` 0.6m gold, all models predict 0.1-0.4m (under-estimate).
-  - This points to a **systematic perceptual bias** — VLMs under-estimate
-    workplace distances on these specific factory images, not random noise.
-
-- Web-search confirmed (2026-05-02) that VLMs in general cap at **50-60% on
-  spatial-reasoning benchmarks**. SpatialVLM was explicitly created because
-  "VLMs lack capabilities in 3D spatial reasoning, such as recognizing
-  quantitative relationships of physical objects like distances or size
-  difference." Our distance-estimation pain is the *known general failure
-  mode* of VLMs, not a bug in our agent.
-
-- **Cross-category sanity check (2026-05-02)** with `gpt-5-mini` on 5
-  hand-picked non-factory tasks: 3/4 valid (75%). Same agent code, no
-  per-category tweaking.
-  - `1.1.0033` (warehouse PDF, fuzzy): 1.0 ✓
-  - `2.1.0001` (warehouse image, distance fuzzy): 0.0 — predicted 6m vs
-    gold 12m; same VLM distance bias seen on factory.
-  - `2.1.0058` (warehouse image, fuzzy): error — benchmark data bug, the
-    task's `input_data` is `WH_..._00_05jpg` (missing the `.` before `jpg`),
-    so the green's `BenchmarkDataSource._load_single_file` rejects it with
-    `Unsupported file extension: ` (empty). Affects every competitor, not
-    just us. Worth flagging to RDI but not actionable on the purple side.
-  - `4.1.2001` (retail txt, fuzzy): 1.0 ✓ — business hours read correctly.
-  - `4.1.2002` (retail txt, fuzzy): 1.0 ✓ — list-format hours all correct.
-  - **Conclusion**: PDF/text extraction transfers cleanly across all three
-    categories; image distance-estimation weakness also transfers. No
-    code changes needed for cross-category — same one agent serves
-    factory/warehouse/retail.
-
-## Open questions for the user
-
-1. **Set `gemini-2.5-pro` as the headline default** in the manifest, or
-   leave it on `gpt-5-mini` for cost reasons? Pro is ~10× the API cost but
-   ~5pp better on small samples.
-2. **Add Claude Opus 4.7 as a third provider?** Search results indicate its
-   image resolution jumped from 1.15MP → 3.75MP; could legitimately help
-   distance estimation on factory images. ~50 LOC; needs `ANTHROPIC_API_KEY`.
-3. **Implement the re-verification loop?** ~half a day; expected ~5-15pp on
-   numerical_match but doubles cost/latency.
-4. **Build & submit a baseline now**, or keep iterating locally first? A
-   baseline result on the leaderboard would be informative even at ~60%.
-
-## How to test (3-minute smoke test)
-
-```bash
-cd /root/agentbeats/purple
-export OPENAI_API_KEY=sk-...
-export HUGGINGFACE_TOKEN=hf_...
-
-# Single known-good task
-.venv/bin/python -m tests.harness --n 1 --ids 2.3.0011 --out smoke.json
-
-# 6-task mixed sample (seed=42 is the canonical comparison seed used above)
-.venv/bin/python -m tests.harness --n 6 --seed 42 --out mixed6.json
-
-# Switch model
-LLM_MODEL=gemini-2.5-pro GEMINI_API_KEY=AIza... \
-  .venv/bin/python -m tests.harness --n 6 --seed 42 --out mixed6_gem.json
-
-# Single-bucket runs
-.venv/bin/python -m tests.harness --n 4 --bucket json --seed 3 --out json4.json
+```text
+1.1.0024
+1.1.0028
+2.3.0011
+2.3.0014
+2.3.0019
+2.3.0020
+2.3.0051
+2.3.0054
+2.3.0071
+2.3.0083
+2.3.0021
+2.3.0026
+2.3.0041
+2.3.0043
+3.3.0003
+3.4.0003
+4.2.0001
+4.2.0026
 ```
 
-Expectations on the seed=42 mixed sample:
-- `gpt-5-mini`: 2-3 / 6 (45-50%), ~30s wall.
-- `gemini-2.5-pro`: 3 / 6 (50%), ~60-90s wall.
-- All models will fail `2.3.0019` (long-sleeves) and the 0.5m / 0.6m
-  distance tasks — that's the known model ceiling, not an agent bug.
+This slice mixes PDF extraction, PPE / spatial yes-no, numerical distance,
+multi-image counting, and JSON reports. It is the default local iteration set.
 
-If it fails:
-- Check that `OPENAI_API_KEY` and `HUGGINGFACE_TOKEN` are set.
-- Check that `.venv/bin/python` exists; recreate via
-  `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
-- For Gemini failures: confirm the env value doesn't have a leading `=` —
-  the user's free-tier key was `=AIza...` (extra `=`); the paid key is
-  clean. `GeminiProvider.__init__` strips a leading `=` defensively.
+Run it with:
 
-## Submission flow (user does these)
+```bash
+env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
+```
 
-GitHub user is `ab-shetty`. Repo name TBD; suggested
-`agentbeats-fwa-purple` → image `ghcr.io/ab-shetty/purple-agent-fwa`.
+Use this slice for honest deltas. Do not go back to random-seed comparisons
+unless the user explicitly asks for broader sampling.
 
-Not yet done. To do once:
+## Measured progress so far
 
-1. **Push to a public GitHub repo** under `ab-shetty/`. Add a publish
-   workflow that builds and pushes `linux/amd64` to GHCR on every push to
-   `main`.
-2. **Make the GHCR package public** (one-time): open
-   `https://github.com/ab-shetty?tab=packages`, switch visibility to
-   **Public** so the AgentBeats runner can pull without auth.
-3. **Update `amber-manifest.json5`** with the pinned digest from the
-   workflow's job summary
-   (`ghcr.io/ab-shetty/purple-agent-fwa@sha256:<DIGEST>`). Commit + push.
-4. **Submit on agentbeats.dev** via Quick Submit:
-   - Manifest URL:
-     `https://raw.githubusercontent.com/ab-shetty/agentbeats-fwa-purple/main/amber-manifest.json5`
-   - Pick the FieldWorkArena leaderboard + the **factory** category.
-   - Paste the encrypted `openai_api_key` (and optionally `gemini_api_key`).
-   - Optional Config JSON, e.g.
-     `{"llm_model":"gemini-2.5-pro","reasoning_effort_numeric":"high"}`
-   - The runner forks the leaderboard repo, opens a PR, and writes the
-     result JSON.
+All scores below are local harness scores, not leaderboard submissions.
 
-## Where to push next for top-3
+### Canonical progression
 
-1. **Submit a baseline now** on `gpt-5-mini` so we have a real anchor
-   number, then iterate. Without a real submission, we're optimizing blind
-   against local sample noise.
-2. **Add a re-verification pass on numerical_match tasks specifically.** Of
-   the 24 numerical_match tasks, distance estimation is where 80% of the
-   score gap lives. A second pass that re-asks "given these reference
-   objects, count widths between A and B" could move scores 5-15pp.
-3. **Add a vision-tool augmentation** — call a depth-estimation or
-   object-detection API (e.g. Grounding-DINO via HF) for distance tasks
-   only, and feed the bounding-box pixel distance + a known reference scale
-   to the LLM for the actual answer. This is the *most likely* path to
-   beating 90%; it's also multi-day work.
-4. **Test Claude Opus 4.7** as a provider — its higher image resolution
-   may genuinely help on factory images. ~50 LOC plus `ANTHROPIC_API_KEY`.
-5. **Tune prompts against the canonical 10-task subset** once chosen, NOT
-   against random seeds. Currently the system prompt is a reasonable
-   baseline; targeted improvements to the numeric-distance and PDF-
-   extraction sections are likely cheap wins.
-6. **Pin a canonical subset and stop seed-shopping** (user direction
-   2026-05-02 — important: the user explicitly does not want random seeds).
-   Commit `tests/canonical.txt` with 10 representative IDs and run that
-   subset every iteration with deterministic decoding for honest deltas.
+- `baseline_fixed18.json`: `9/18` (`0.500`)
+- `rerun_fixed18.json`: `10/18` (`0.556`)
+- `canonical_with_crop.json`: `11/18` (`0.611`)
+
+Interpretation:
+
+- Prompt and JSON cleanup moved the slice from `9/18` to `10/18`.
+- The coordinate crop tool produced the next real gain to `11/18`.
+
+### Second-pass verifier results
+
+- `noverify_spatial8.json`: `4/8`
+- `verify_spatial8.json`: `3/8`
+
+Interpretation:
+
+- The broad text-answer verifier currently hurts score.
+- Keep `ENABLE_SECOND_PASS_VERIFY=0` by default.
+
+### Deterministic JSON work
+
+Focused JSON checks established that output rendering is no longer the main
+problem for several tasks:
+
+- `4.2.0001` was fixed by deterministic empty-output handling.
+- `4.2.0026` now renders the right schema shape but still misses because the
+  underlying distance estimate is wrong.
+- `3.4.0003` still fails because the model overcalls incidents.
+
+### Bbox JSON route results
+
+The bbox-specific route is now the strongest recent improvement.
+
+- `bbox_json_path_v3.json`: `4/4`
+  - `3.4.0005` pass
+  - `3.4.0007` pass
+  - `4.2.0028` pass
+  - `4.2.0030` pass
+
+This route now combines:
+
+1. per-image bbox subquestions
+2. crop-backed evidence
+3. deterministic final JSON rendering
+4. narrow confirmation of candidate incidents
+
+### Mixed JSON suite
+
+- `json_suite_v3.json`: `5/7` (`0.714`)
+
+Breakdown:
+
+- Pass:
+  - `3.4.0005`
+  - `3.4.0007`
+  - `4.2.0001`
+  - `4.2.0028`
+  - `4.2.0030`
+- Fail:
+  - `3.4.0003`
+  - `4.2.0026`
+
+Interpretation:
+
+- Bbox-report JSON tasks are now substantially better.
+- The remaining misses are still mostly **distance perception**, not JSON
+  formatting.
+
+## What is currently working well
+
+1. **PDF / text extraction**
+   The document path is stable and transfers across categories.
+2. **Coordinate-region reasoning**
+   The crop tool materially improved bbox and facing tasks.
+3. **Bbox-based JSON incident reports**
+   The specialized route is now a measured win.
+4. **OpenAI JSON robustness**
+   `src/providers.py` now retries lower-effort JSON calls when OpenAI exhausts
+   `max_output_tokens` before visible output.
+
+## What is still weak
+
+### 1. Distance estimation
+
+This is still the main score bottleneck. Known problematic tasks include:
+
+- `2.3.0021`
+- `2.3.0026`
+- `2.3.0043`
+- `3.4.0003`
+- `4.2.0026`
+
+Current pattern:
+
+- The model often picks the wrong worker-object pair or underestimates
+  spatial distance.
+- JSON rendering now preserves these wrong facts cleanly, which makes the
+  remaining problem easier to isolate.
+
+### 2. Long-sleeve detection
+
+`2.3.0019` is still a stubborn visual miss.
+
+### 3. Broad self-verification
+
+The generic second-pass verifier is not yet selective enough to help overall.
+
+## Code changes that matter most
+
+### [src/providers.py](/root/agentbeats/purple/src/providers.py)
+
+- Better extraction of visible text from Responses API output objects.
+- Retry path for incomplete JSON responses when `max_output_tokens` is hit.
+
+### [src/multimodal.py](/root/agentbeats/purple/src/multimodal.py)
+
+- `AgentInput` now carries:
+  - `original_sizes`
+  - `derived_views`
+- These are required for coordinate-aware crop derivation.
+
+### [src/agent.py](/root/agentbeats/purple/src/agent.py)
+
+Major additions:
+
+- task-type prompt suffixes for box, facing, long-sleeve, evidence-only, and
+  JSON issue-report tasks
+- coordinate crop derivation
+- deterministic issue-report JSON rendering
+- bbox-coordinate map parsing from `Image_Bounding_Box_Coordinates.txt`
+- bbox-specific JSON routing
+- narrow bbox incident confirmation pass
+
+### [tests/harness.py](/root/agentbeats/purple/tests/harness.py)
+
+- `--canonical` support for fixed-slice evaluation
+
+### [tests/canonical.txt](/root/agentbeats/purple/tests/canonical.txt)
+
+- fixed representative task list for iteration
+
+## Immediate next steps
+
+Priority is based on expected score lift per unit complexity under the
+user's constraints.
+
+### 1. Build a distance-specific helper
+
+This is the next highest-value item.
+
+Target tasks:
+
+- `3.4.0003`
+- `4.2.0026`
+- distance-heavy `2.3.*` tasks in the canonical slice
+
+Direction:
+
+- keep it lightweight and CPU-friendly
+- avoid heavy local models unless clearly worth it
+- likely use simple geometry / object-selection scaffolding rather than a
+  generic second-pass self-check
+
+Good shape:
+
+1. isolate the relevant object pair explicitly
+2. ask for the minimum distance only between those two objects
+3. optionally run a narrow verification pass on the selected pair
+
+### 2. Make distance verification selective, not global
+
+The current broad verifier is too blunt. If verification comes back, it
+should probably be restricted to:
+
+- numeric distance tasks
+- candidate bbox incidents
+- maybe long-sleeve edge cases
+
+### 3. Re-run the canonical 18-task slice after the next distance change
+
+Do not trust narrow wins alone. The next real milestone should be a
+canonical improvement beyond `11/18`.
+
+### 4. Consider a real submission once the next distance lift lands
+
+There is still no leaderboard submission as of 2026-05-02. A baseline
+submission becomes more worthwhile once the local agent is no longer losing
+easy bbox JSON tasks.
+
+## Explicitly deprioritized for now
+
+1. **Competitor inspection**
+   Forbidden by user instruction.
+2. **Task-answer hardcoding**
+   Forbidden by user instruction.
+3. **Heavy local vision stacks**
+   Not a first move because the final benchmark runs on GitHub runners.
+4. **Generic web-search tools**
+   Not the bottleneck.
+5. **Broader provider expansion**
+   Not the highest-leverage next step while distance errors are still local
+   and specific.
+
+## Submission status
+
+No submission has been made yet.
+
+When ready:
+
+1. push the repo to a public GitHub repository
+2. build and publish a `linux/amd64` image to GHCR
+3. make the GHCR package public
+4. update `amber-manifest.json5` with the pinned digest
+5. submit via Agentbeats Quick Submit against FieldWorkArena factory
+
+## How to test
+
+### Syntax check
+
+```bash
+python3.13 -m compileall src tests
+```
+
+### Canonical slice
+
+```bash
+env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
+```
+
+### Bbox JSON regression slice
+
+```bash
+env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
+  --ids 3.4.0005 3.4.0007 4.2.0028 4.2.0030 \
+  --out bbox_json_path_v3.json
+```
+
+### Mixed JSON suite
+
+```bash
+env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
+  --ids 3.4.0003 3.4.0005 3.4.0007 4.2.0001 4.2.0026 4.2.0028 4.2.0030 \
+  --out json_suite_v3.json
+```
+
+### Optional toggles
+
+Broad verifier off by default:
+
+```bash
+env LLM_MODEL=gpt-5-mini ENABLE_SECOND_PASS_VERIFY=1 \
+  .venv/bin/python -m tests.harness --canonical --out verify_run.json
+```
+
+Bbox incident confirmation on by default, but can be disabled for A/B tests:
+
+```bash
+env LLM_MODEL=gpt-5-mini ENABLE_BBOX_JSON_CONFIRM=0 \
+  .venv/bin/python -m tests.harness \
+  --ids 3.4.0005 3.4.0007 4.2.0028 4.2.0030 \
+  --out bbox_json_no_confirm.json
+```
+
+## Handoff summary
+
+If a fresh agent picks this up, the current situation is:
+
+1. The crop tool is real and beneficial.
+2. Deterministic JSON rendering is real and beneficial.
+3. Bbox JSON routing is now a clear measured win.
+4. The next score bottleneck is distance perception, not formatting.
+5. Do not inspect competitor code.
+6. Do not hardcode answers.
+7. Use `gpt-5-mini` for local test loops unless the user redirects.

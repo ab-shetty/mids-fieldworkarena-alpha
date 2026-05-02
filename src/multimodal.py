@@ -31,6 +31,8 @@ class AgentInput:
     text_blocks: list[str]            # text from TextPart + extracted PDF/text
     images: list[tuple[str, bytes]]   # (display_name, JPEG bytes)
     file_summary: list[str]           # human-readable list of attached files
+    original_sizes: dict[str, tuple[int, int]]  # original image size before downscale
+    derived_views: list[str]          # machine-generated image notes for the model
 
 
 def _coerce_bytes(data) -> bytes:
@@ -44,19 +46,20 @@ def _coerce_bytes(data) -> bytes:
     raise ValueError(f"Unsupported file data type: {type(data)}")
 
 
-def _image_to_jpeg(raw: bytes, max_edge: int = MAX_IMAGE_EDGE) -> bytes:
+def _image_to_jpeg(raw: bytes, max_edge: int = MAX_IMAGE_EDGE) -> tuple[bytes, tuple[int, int]]:
     img = Image.open(io.BytesIO(raw))
     if img.mode in ("RGBA", "LA", "P"):
         img = img.convert("RGB")
     elif img.mode != "RGB":
         img = img.convert("RGB")
-    w, h = img.size
+    orig_size = img.size
+    w, h = orig_size
     if max(w, h) > max_edge:
         scale = max_edge / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=92)
-    return buf.getvalue()
+    return buf.getvalue(), orig_size
 
 
 def _extract_pdf_text(raw: bytes) -> str:
@@ -116,6 +119,7 @@ def parts_to_input(parts: list[Part]) -> AgentInput:
     text_blocks: list[str] = []
     images: list[tuple[str, bytes]] = []
     summary: list[str] = []
+    original_sizes: dict[str, tuple[int, int]] = {}
 
     for part in parts:
         root = part.root if hasattr(part, "root") else part
@@ -145,7 +149,9 @@ def parts_to_input(parts: list[Part]) -> AgentInput:
 
             if mime.startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"):
                 try:
-                    images.append((name, _image_to_jpeg(raw)))
+                    jpeg, orig_size = _image_to_jpeg(raw)
+                    images.append((name, jpeg))
+                    original_sizes[name] = orig_size
                     summary.append(f"image: {name}")
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Image decode failed for %s: %s", name, e)
@@ -171,13 +177,25 @@ def parts_to_input(parts: list[Part]) -> AgentInput:
             if mime.startswith("video/") or ext in (".mp4", ".mov", ".avi"):
                 frames = _extract_video_frames(raw)
                 for i, fb in enumerate(frames):
-                    images.append((f"{name}#frame{i}", fb))
+                    frame_name = f"{name}#frame{i}"
+                    images.append((frame_name, fb))
+                    try:
+                        with Image.open(io.BytesIO(fb)) as img:
+                            original_sizes[frame_name] = img.size
+                    except Exception:  # noqa: BLE001
+                        pass
                 summary.append(f"video: {name} ({len(frames)} frames sampled)")
                 continue
 
             logger.warning("Unhandled file type: name=%s mime=%s", name, mime)
 
-    return AgentInput(text_blocks=text_blocks, images=images, file_summary=summary)
+    return AgentInput(
+        text_blocks=text_blocks,
+        images=images,
+        file_summary=summary,
+        original_sizes=original_sizes,
+        derived_views=[],
+    )
 
 
 def images_to_responses_blocks(images: list[tuple[str, bytes]]) -> list[dict]:

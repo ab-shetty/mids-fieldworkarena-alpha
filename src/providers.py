@@ -46,6 +46,22 @@ class OpenAIProvider(LLMProvider):
         self.client = OpenAI()
         self.model = model
 
+    @staticmethod
+    def _extract_text(resp) -> str:
+        text = (getattr(resp, "output_text", None) or "").strip()
+        if text:
+            return text
+
+        chunks: list[str] = []
+        for item in getattr(resp, "output", None) or []:
+            for content in getattr(item, "content", None) or []:
+                if getattr(content, "type", None) != "output_text":
+                    continue
+                value = getattr(content, "text", None)
+                if value:
+                    chunks.append(value)
+        return "".join(chunks).strip()
+
     def respond(
         self,
         *,
@@ -76,8 +92,34 @@ class OpenAIProvider(LLMProvider):
         # Responses API; we leave decoding params at their defaults.
         if output_format == "json":
             kwargs["text"] = {"format": {"type": "json_object"}}
+
         resp = self.client.responses.create(**kwargs)
-        return (resp.output_text or "").strip()
+        text_out = self._extract_text(resp)
+
+        incomplete = getattr(resp, "incomplete_details", None)
+        reason = getattr(incomplete, "reason", None)
+        if output_format == "json" and getattr(resp, "status", None) == "incomplete" and reason == "max_output_tokens":
+            retry_effort = "low" if effort in ("medium", "high") else effort
+            if retry_effort != effort:
+                logger.warning(
+                    "OpenAI response exhausted max_output_tokens before visible output; retrying with effort=%s",
+                    retry_effort,
+                )
+                kwargs["reasoning"] = {"effort": retry_effort}
+                retry_resp = self.client.responses.create(**kwargs)
+                retry_text = self._extract_text(retry_resp)
+                if retry_text:
+                    return retry_text
+
+        if text_out:
+            return text_out
+
+        logger.warning(
+            "OpenAI response produced no visible output (status=%s, incomplete_reason=%s)",
+            getattr(resp, "status", None),
+            reason,
+        )
+        return text_out
 
 
 class GeminiProvider(LLMProvider):

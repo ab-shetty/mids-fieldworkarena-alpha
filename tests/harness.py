@@ -88,6 +88,13 @@ def _make_a2a_parts(goal: str, file_payloads) -> list[Part]:
     return parts
 
 
+def _load_canonical_ids() -> list[str]:
+    path = HERE / "canonical.txt"
+    if not path.exists():
+        raise FileNotFoundError(f"Canonical task list not found: {path}")
+    return [line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith("#")]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=6, help="Number of tasks to sample")
@@ -96,6 +103,7 @@ def main() -> None:
     parser.add_argument("--ids", nargs="*", help="Specific task IDs to run instead of sampling")
     parser.add_argument("--out", default="harness_results.json")
     parser.add_argument("--skip", nargs="*", default=[], help="Task IDs to skip")
+    parser.add_argument("--canonical", action="store_true", help="Run the fixed representative task subset in tests/canonical.txt")
     parser.add_argument(
         "--bucket",
         choices=["all", "fuzzy", "numerical", "json"],
@@ -138,6 +146,11 @@ def main() -> None:
 
     if args.all:
         sample = sorted(factory_tasks, key=lambda t: t["id"])
+    elif args.canonical:
+        canonical_ids = _load_canonical_ids()
+        ids = set(canonical_ids)
+        sample = [t for tid, t in all_tasks.items() if tid in ids]
+        sample = sorted(sample, key=lambda t: canonical_ids.index(t["id"]))
     elif args.ids:
         # When IDs are explicit, allow any task from any category, not just factory.
         ids = set(args.ids)
