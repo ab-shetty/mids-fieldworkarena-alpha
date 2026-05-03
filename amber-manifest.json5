@@ -6,7 +6,7 @@
 // Pin to an immutable digest at submission time:
 //   ghcr.io/<YOUR_GHCR_USER>/purple-agent-fwa@sha256:<DIGEST>
 {
-  manifest_version: "0.2.0",
+  manifest_version: "0.1.0",
   program: {
     image: "ghcr.io/ab-shetty/mids-fieldworkarena-alpha:latest",
     entrypoint: [
