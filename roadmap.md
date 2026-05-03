@@ -60,7 +60,7 @@ concentrated and where the current agent work has been evaluated.
 - [src/multimodal.py](/root/agentbeats/purple/src/multimodal.py)
   Converts A2A file parts into image/text inputs.
 - [src/providers.py](/root/agentbeats/purple/src/providers.py)
-  Provider abstraction over OpenAI and Gemini.
+  OpenAI Responses API wrapper.
 - [src/agent.py](/root/agentbeats/purple/src/agent.py)
   Main task logic, prompt selection, crop derivation, JSON normalization,
   bbox-specific routing.
@@ -125,7 +125,7 @@ measured improvement, not a speculative one.
 
 Main env vars in use:
 
-- `LLM_MODEL` default: `gpt-5-mini`
+- `OPENAI_MODEL` default: `gpt-5-mini`
 - `REASONING_EFFORT`
 - `REASONING_EFFORT_JSON`
 - `REASONING_EFFORT_NUMERIC`
@@ -170,7 +170,7 @@ multi-image counting, and JSON reports. It is the default local iteration set.
 Run it with:
 
 ```bash
-env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
+env OPENAI_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
 ```
 
 Use this slice for honest deltas. Do not go back to random-seed comparisons
@@ -408,13 +408,13 @@ python3.13 -m compileall src tests
 ### Canonical slice
 
 ```bash
-env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
+env OPENAI_MODEL=gpt-5-mini .venv/bin/python -m tests.harness --canonical --out canonical.json
 ```
 
 ### Bbox JSON regression slice
 
 ```bash
-env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
+env OPENAI_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
   --ids 3.4.0005 3.4.0007 4.2.0028 4.2.0030 \
   --out bbox_json_path_v3.json
 ```
@@ -422,7 +422,7 @@ env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
 ### Mixed JSON suite
 
 ```bash
-env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
+env OPENAI_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
   --ids 3.4.0003 3.4.0005 3.4.0007 4.2.0001 4.2.0026 4.2.0028 4.2.0030 \
   --out json_suite_v3.json
 ```
@@ -432,14 +432,14 @@ env LLM_MODEL=gpt-5-mini .venv/bin/python -m tests.harness \
 Broad verifier off by default:
 
 ```bash
-env LLM_MODEL=gpt-5-mini ENABLE_SECOND_PASS_VERIFY=1 \
+env OPENAI_MODEL=gpt-5-mini ENABLE_SECOND_PASS_VERIFY=1 \
   .venv/bin/python -m tests.harness --canonical --out verify_run.json
 ```
 
 Bbox incident confirmation on by default, but can be disabled for A/B tests:
 
 ```bash
-env LLM_MODEL=gpt-5-mini ENABLE_BBOX_JSON_CONFIRM=0 \
+env OPENAI_MODEL=gpt-5-mini ENABLE_BBOX_JSON_CONFIRM=0 \
   .venv/bin/python -m tests.harness \
   --ids 3.4.0005 3.4.0007 4.2.0028 4.2.0030 \
   --out bbox_json_no_confirm.json

@@ -44,9 +44,7 @@ from .providers import LLMProvider, make_provider
 
 logger = logging.getLogger(__name__)
 
-# Model is submitter-selectable. `OPENAI_MODEL` keeps backward compat with the
-# original variable name; `LLM_MODEL` is the provider-neutral alias.
-MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "medium")
 REASONING_EFFORT_JSON = os.environ.get("REASONING_EFFORT_JSON", "high")
 REASONING_EFFORT_NUMERIC = os.environ.get("REASONING_EFFORT_NUMERIC", "high")

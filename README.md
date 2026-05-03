@@ -58,19 +58,14 @@ Then point `amber-manifest.json5` at the immutable digest and submit per the Age
 |---|---|---|---|
 | `gpt-5-mini` | seed=42, n=6 | 0.45 | ~5s/task; ~7 min for full 79 |
 | `gpt-5`      | seed=42, n=6 | 0.50 | ~30s/task; ~30–40 min for full 79 |
-| `gemini-2.5-flash` (free tier) | seed=42, n=6 | 0.00 | self-contradictory wording, hallucinated JSON violations |
-| `gemini-2.5-flash` (free tier) | seed=11, n=6 | 0.17 | rate-limited at 5 req/min |
 
-Numerical-distance tasks (24/79) are the structural weak point — every model we tested misses some `0.5 m`/`1.5 m` distance estimates by ±20%. `gemini-2.5-pro` (paid) is plausibly the leaderboard's choice but we couldn't test it on the free key. Submitter should pick model+effort by accuracy/cost.
+Numerical-distance tasks (24/79) are the structural weak point — every model we tested misses some `0.5 m`/`1.5 m` distance estimates by ±20%. Submitter should pick model+effort by accuracy/cost.
 
-### Provider selection
+### Model selection
 
-The submitter picks a backend at run time via the manifest config:
+The submitter picks an OpenAI model at run time via the manifest config:
 
 ```json5
-{ llm_model: "gpt-5",            openai_api_key: "sk-…" }   // OpenAI
-{ llm_model: "gemini-2.5-pro",   gemini_api_key: "AIza…" }   // Gemini
-{ llm_model: "gpt-5-mini",       openai_api_key: "sk-…" }   // default
+{ openai_model: "gpt-5",       openai_api_key: "sk-…" }
+{ openai_model: "gpt-5-mini",  openai_api_key: "sk-…" }   // default
 ```
-
-Provider is auto-detected from the model name prefix (`gemini-*` → Gemini, else OpenAI). Override via `llm_provider` if needed.

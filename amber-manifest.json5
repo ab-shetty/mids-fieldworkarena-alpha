@@ -17,10 +17,7 @@
       "--port", "8080",
     ],
     env: {
-      LLM_MODEL: "${config.llm_model}",
-      LLM_PROVIDER: "${config.llm_provider}",
       OPENAI_API_KEY: "${config.openai_api_key}",
-      GEMINI_API_KEY: "${config.gemini_api_key}",
       OPENAI_MODEL: "${config.openai_model}",
       REASONING_EFFORT: "${config.reasoning_effort}",
       REASONING_EFFORT_JSON: "${config.reasoning_effort_json}",
@@ -37,10 +34,7 @@
   config_schema: {
     type: "object",
     properties: {
-      llm_model:                { type: "string" },
-      llm_provider:             { type: "string" },
       openai_api_key:           { type: "string", secret: true },
-      gemini_api_key:           { type: "string", secret: true },
       openai_model:             { type: "string" },
       reasoning_effort:         { type: "string" },
       reasoning_effort_json:    { type: "string" },
