@@ -123,11 +123,6 @@ The benchmark's grader uses exact field-name and format matching. Rather than ov
 
 ---
 
-## Results
-
-The final submission runs **gpt-5.4** across the full benchmark (all categories, all grading types). The numerical tasks are the structural weak point: distance estimation from still images carries inherent noise, and every model we tested misses some ±0.5 m clearance judgements regardless of reasoning effort.
-
----
 
 ## Project Structure
 
