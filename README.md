@@ -1,6 +1,6 @@
 # FieldWorkArena Agent — MIDS Alpha
 
-A multimodal reasoning agent for the [FieldWorkArena AgentBeats benchmark](https://agentbeats.dev/agentbeater/fieldworkarena). Given factory-floor images, PDFs, and video clips, the agent answers safety-compliance questions: Is the worker wearing a hard hat? How many violations are visible? Is the cart within 1 meter of the worker?
+A multimodal reasoning agent for the [FieldWorkArena AgentBeats benchmark](https://agentbeats.dev/agentbeater/fieldworkarena). Given field-operations images, PDFs, and video clips from factory, warehouse, and retail scenes, the agent answers safety-compliance questions: Is the worker wearing a hard hat? How many violations are visible? Is the cart within 1 meter of the worker?
 
 ---
 
@@ -8,15 +8,15 @@ A multimodal reasoning agent for the [FieldWorkArena AgentBeats benchmark](https
 
 FieldWorkArena tasks arrive as A2A messages carrying a natural-language question, attached files, and an output-format hint (`text` or `json`). A judge agent grades the response — using fuzzy match, numerical match, or structured JSON comparison — against a gold answer derived from human annotation.
 
-The factory category has 79 tasks across three grading types:
+The benchmark spans three scene categories (factory, warehouse, retail) and three grading types:
 
-| Grading | Count | What it tests |
-|---|---|---|
-| `fuzzy_match` | 43 | PPE compliance, yes/no, identification |
-| `numerical_match` | 24 | Counts, distances, timestamps |
-| `json_match` | 12 | Structured incident/violation reports |
+| Grading | What it tests |
+|---|---|
+| `fuzzy_match` | PPE compliance, yes/no, identification |
+| `numerical_match` | Counts, distances, timestamps |
+| `json_match` | Structured incident/violation reports |
 
-Input files skew heavily visual: 98 images, 14 PDFs, 2 text files. Getting the right answer requires reading images carefully — and producing answers in exactly the format the grader expects.
+Inputs are mostly visual — images and short video clips, with a handful of PDF inspection checklists. Getting the right answer requires reading images carefully and producing answers in exactly the format the grader expects.
 
 ---
 
@@ -27,7 +27,7 @@ A single-call reasoning agent that:
 1. **Understands the task type** from the question before sending anything to the model.
 2. **Composes a targeted system prompt** — the base rules plus only the guidance relevant to that task type.
 3. **Enhances the visual evidence** by cropping bounding-box regions out of images so the model focuses on exactly the right area.
-4. **Calls an OpenAI reasoning model** (gpt-5-mini or gpt-5) via the Responses API with appropriate effort.
+4. **Calls gpt-5.4** via the OpenAI Responses API with appropriate reasoning effort for the task type.
 5. **Post-processes the output** to match the benchmark's exact JSON schemas, including field names, ID sequences, and distance formats.
 
 There is no tool use, no retrieval, no multi-step chain — one well-prepared call is enough for almost all tasks.
@@ -125,14 +125,7 @@ The benchmark's grader uses exact field-name and format matching. Rather than ov
 
 ## Results
 
-Local evaluation on a random factory sample (seed=42, n=6), graded with the benchmark's own evaluators:
-
-| Model | Score rate | Notes |
-|---|---|---|
-| `gpt-5-mini` | **0.45** | ~5 s/task |
-| `gpt-5` | **0.50** | ~30 s/task |
-
-The 24 numerical tasks are the hardest: distance estimation from still images carries inherent noise, and every model we tested misses some ±0.5 m clearance judgements.
+The final submission runs **gpt-5.4** across the full benchmark (all categories, all grading types). The numerical tasks are the structural weak point: distance estimation from still images carries inherent noise, and every model we tested misses some ±0.5 m clearance judgements regardless of reasoning effort.
 
 ---
 
